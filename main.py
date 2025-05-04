@@ -5,18 +5,9 @@ import torch
 import zlib
 import csv
 from datasets import load_dataset
-from transformers import MambaForCausalLM, AutoTokenizer, AutoModelForCausalLM, StoppingCriteria
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from tqdm import tqdm
-from model_utils import calculate_perplexity, print_best, parse_pilecorpus, parse_splitted, parse_wmt_splitted, parse_local, device
-
-class RwkvStoppingCriteria(StoppingCriteria):
-    def __init__(self, eos_sequence = [187,187], eos_token_id = 537):
-        self.eos_sequence = eos_sequence
-        self.eos_token_id = eos_token_id
-    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-        last_2_ids = input_ids[:,-2:].tolist()
-        return self.eos_sequence in last_2_ids
-
+from model_utils import calculate_perplexity, print_best, parse_pilecorpus, parse_splitted, parse_local, device
 
 def main(args):
     print(f"Using device: {device}")
@@ -28,8 +19,6 @@ def main(args):
         ds = parse_local(path=args.corpus_path)
     elif args.is_splitted:
         ds= parse_splitted(path=args.corpus_path, subset=args.corpus_subset)
-    elif args.is_wmt:
-        ds= parse_wmt_splitted(path=args.corpus_path, split_set=args.split)
     else:
         ds= parse_pilecorpus(path = args.corpus_path, start_seed=args.random_seed)
 
@@ -46,25 +35,18 @@ def main(args):
 
     model1, model2 = None, None
 
-    if args.is_mamba:
-        model1 = MambaForCausalLM.from_pretrained(args.model1, return_dict=True).to(device)
-        model2 = MambaForCausalLM.from_pretrained(args.model2, return_dict=True).to(device)
-    elif args.is_bltm:
-        model1 = AutoModelForCausalLM.from_pretrained(
-            args.model1, 
-            trust_remote_code=True, 
-            return_dict=True
-        ).to(device)
+    model1 = AutoModelForCausalLM.from_pretrained(
+        args.model1, 
+        trust_remote_code=True,
+        return_dict=True
+    ).to(device)
 
-        model2 = AutoModelForCausalLM.from_pretrained(
-            args.model2, 
-            trust_remote_code=True, 
-            return_dict=True
-        ).to(device)
+    model2 = AutoModelForCausalLM.from_pretrained(
+        args.model2, 
+        trust_remote_code=True,
+        return_dict=True
+    ).to(device)
 
-    else:
-        model1 = AutoModelForCausalLM.from_pretrained(args.model1, return_dict=True).to(device)
-        model2 = AutoModelForCausalLM.from_pretrained(args.model2, return_dict=True).to(device)
 
     model1.config.pad_token_id = model1.config.eos_token_id
     model2.eval()
@@ -116,29 +98,14 @@ def main(args):
             
             print("Attention Mask shape:", inputs['attention_mask'].shape)
         
-            if "rwkv" in args.model1:
-                #inputs = tokenizer(input_ids, return_tensors="pt")
-                
-                # Forward pass
-                output_sequences = model1.generate(input_ids=inputs['input_ids'].to(device), max_new_tokens=input_len + seq_len
-                                                   , stopping_criteria = [RwkvStoppingCriteria()])
-
-
-                # output_sequences = model1.generate(
-                #     input_ids=inputs['input_ids'].to(device),
-                #     max_length=input_len + seq_len,
-                #     top_k=top_k, 
-                #     top_p=1.0
-                # )
-            else:
-                output_sequences = model1.generate(
-                    input_ids=inputs['input_ids'].to(device),
-                    attention_mask=inputs['attention_mask'].to(device),
-                    max_length=input_len + seq_len,
-                    do_sample=True, 
-                    #top_k=top_k, 
-                    top_p=1.0
-                )
+            output_sequences = model1.generate(
+                input_ids=inputs['input_ids'].to(device),
+                attention_mask=inputs['attention_mask'].to(device),
+                max_length=input_len + seq_len,
+                do_sample=True, 
+                #top_k=top_k, 
+                top_p=1.0
+            )
 
             texts = [tokenizer.decode(seq, skip_special_tokens=True) for seq in output_sequences]
             for text in texts:
@@ -235,14 +202,10 @@ def parse_arguments(argv):
     parser.add_argument('--corpus-subset', type=str, required=False, help="data subset if using splitted data")
     parser.add_argument('--name-tag', type=str, required=False, help="Path to the corpus dataset")
     parser.add_argument('--random-seed', type=int, required=False, help="Random seed for dataset shuffling")
-    parser.add_argument('--is-mamba', action='store_true', help="Determine type of tokeniser")
     parser.add_argument('--split', type=str, required=False, help="Split for dataset")
     parser.add_argument('--is-splitted', action='store_true', help="Determine type of dataset parsing")
-    parser.add_argument('--is-wmt',  action='store_true', help="Determine type of dataset parsing")
     parser.add_argument('--is-local',action='store_true', help="local text file")
     parser.add_argument('--input-len', type=int, default=150, help="Default length for input prompt")
-    parser.add_argument('--is-rwkv', action='store_true', help="Special load for model")
-    parser.add_argument('--is-bltm', action='store_true', help="Special load for model")
 
 
     return parser.parse_args(argv)
